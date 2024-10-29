@@ -161,6 +161,7 @@ def simulate_yellows(suspension_count, team_games_played, current_yellows, yc_pr
 
 def main():
     connection = connect_to_db()
+    unique_combinations = set()
 
     team_ids = fetch_teams(connection)
     for team_id in team_ids[:1]:
@@ -169,16 +170,18 @@ def main():
         player_ids = fetch_players_from_team(connection, team_id)
 
         for player_id in player_ids[:10]:
-            print(f"Player {player_id}:")
+            print(f"Player ID: {player_id}")
             gwdata = fetch_players_gwdata(connection, player_id)
             suspension_count, total_yellows, yc_prob = yc_prob_and_suspension_info(gwdata, team_games_played)
-            print(f"Total Yellows: {total_yellows} | YC Prob: {yc_prob}")
-            if total_yellows in [5, 10, 15, 20]:
-                print(f"Remaining games suspended: {suspension_count}")
-            print()
-            print()
+            print(suspension_count, total_yellows, yc_prob, team_games_played)
+            
+            if yc_prob != 0:
+                unique_combinations.add((suspension_count, total_yellows, yc_prob, team_games_played))
 
-
+    # print("Unique Combinations:")
+    # for combination in unique_combinations:
+    #     suspension_count, total_yellows, yc_prob, team_games_played = combination
+    #     print(f"Suspension Count: {suspension_count}, Total Yellows: {total_yellows}, YC Prob: {yc_prob}, Team Games Played: {team_games_played}")
 
     # simulate_yellows(0, 9, 4, 0.44, GAMES_IN_SEASON)
     # simulate_yellows(suspension_count, team_games_played, current_yellows, yc_prob, GAMES_IN_SEASON)
