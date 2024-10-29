@@ -73,7 +73,7 @@ def fetch_players_gwdata(connection, player_id):
     JOIN fixtures f
     ON g.fixture_id = f.fixture_id
     WHERE player_id = %s
-    ORDER BY f.date DESC;
+    ORDER BY f.date ASC;
     """
 
     cursor = connection.cursor(dictionary=True)
@@ -82,6 +82,41 @@ def fetch_players_gwdata(connection, player_id):
     cursor.close()
 
     return game_info
+
+def yc_prob_and_suspension_info(gwdata, team_games_played):
+
+    total_yellows = 0
+    games_played = 0
+    consecutive_no_play = 0
+
+    for gw in gwdata:
+        yellow_card = gw['yellow_cards']
+        minutes = gw['minutes']
+    
+        total_yellows += yellow_card
+
+        if minutes == 0:
+            consecutive_no_play += 1
+        else:
+            consecutive_no_play = 0
+            games_played += 1
+
+    if total_yellows == 5 and team_games_played <= 19:
+        suspension_count = max(0, 1 - consecutive_no_play)
+    elif total_yellows == 10 and team_games_played <= 32:
+        suspension_count = max(0, 2 - consecutive_no_play)
+    elif total_yellows == 15:
+        suspension_count = max(0, 3 - consecutive_no_play)
+    elif total_yellows == 20:
+        # We don't know what would happen in this scenario, as it has never happened, but there will be a punishment
+        suspension_count = GAMES_IN_SEASON
+    else:
+        suspension_count = 0
+
+    # Minimum cap at 5 to avoid getting 100% if a player has a very small sample size
+    yc_prob = round(total_yellows / max(5, games_played), 2)
+
+    return suspension_count, total_yellows, yc_prob
 
 def simulate_yellows(suspension_count, team_games_played, current_yellows, yc_prob, games_in_season):
     
@@ -136,13 +171,17 @@ def main():
         for player_id in player_ids[:10]:
             print(f"Player {player_id}:")
             gwdata = fetch_players_gwdata(connection, player_id)
-            for gw in gwdata:
-                print(gw)
-        
+            suspension_count, total_yellows, yc_prob = yc_prob_and_suspension_info(gwdata, team_games_played)
+            print(f"Total Yellows: {total_yellows} | YC Prob: {yc_prob}")
+            if total_yellows in [5, 10, 15, 20]:
+                print(f"Remaining games suspended: {suspension_count}")
+            print()
+            print()
 
 
 
     # simulate_yellows(0, 9, 4, 0.44, GAMES_IN_SEASON)
+    # simulate_yellows(suspension_count, team_games_played, current_yellows, yc_prob, GAMES_IN_SEASON)
     
     connection.close()
 
