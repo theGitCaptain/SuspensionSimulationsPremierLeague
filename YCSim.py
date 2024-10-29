@@ -1,7 +1,7 @@
-import random
 import mysql.connector
+import numpy as np
 
-SIMULATIONS_PER_COMBINATION = 100
+SIMULATIONS_PER_COMBINATION = 1000
 
 GAMES_IN_SEASON = 38
 SEASON = '2024/25'
@@ -92,74 +92,55 @@ def yc_prob_and_suspension_info(gwdata, team_games_played):
     suspension_count = 0
 
     for gw in gwdata:
+        yellow_card = gw['yellow_cards']
+        minutes = gw['minutes']
+
         if suspension_count > 0:
             suspension_count -= 1
 
-        yellow_card = gw['yellow_cards']
-        minutes = gw['minutes']
+        if minutes > 0:
+            games_played += 1
     
         total_yellows += yellow_card
 
-        if minutes > 0:
-            games_played += 1
-
-        if total_yellows == 5 and team_games_played <= 19:
-            suspension_count = 1
-        elif total_yellows == 10 and team_games_played <= 32:
-            suspension_count = 2
-        elif total_yellows == 15:
-            suspension_count = 3
-        elif total_yellows == 20:
-            suspension_count = GAMES_IN_SEASON
+        if yellow_card:
+            if total_yellows == 5 and team_games_played <= 19:
+                suspension_count = 1
+            elif total_yellows == 10 and team_games_played <= 32:
+                suspension_count = 2
+            elif total_yellows == 15:
+                suspension_count = 3
+            elif total_yellows == 20:
+                # Uncertain what happens at this point, but it will be a suspension. Has never happened though
+                suspension_count = GAMES_IN_SEASON
 
     # Minimum cap at 5 to avoid getting 100% if a player has a very small sample size
-    yc_prob = round(total_yellows / max(5, games_played), 2)
+    yc_prob = round(total_yellows / max(5, games_played), 3)
 
     return suspension_count, total_yellows, yc_prob
 
 def simulate_yellows(suspension_count, team_games_played, current_yellows, yc_prob, games_in_season):
-    
     yellows = current_yellows
     remaining_games = games_in_season - team_games_played
     
-    game_suspensions = {game: 0 for game in range(1, remaining_games + 1)}
+    game_suspensions = np.zeros(remaining_games)
 
-    for game in range(1, remaining_games + 1):
-        # print(f"Game {game} (Gameweek {team_games_played + 1}):")
-        # print(f"Current Yellows: {yellows}")
-
+    for game in range(remaining_games):
         if suspension_count > 0:
-            suspended = True
             suspension_count -= 1
-            received_yellow = "Did not play due to suspension"
             game_suspensions[game] += 1
         else:
-            suspended = False
-            yellow_card = random.random() < yc_prob
-
+            yellow_card = np.random.rand() < yc_prob
             if yellow_card:
-                received_yellow = True
                 yellows += 1
-
-                if yellows == 5 and team_games_played <= 19:
+                if yellows == 5 and (team_games_played + game + 1) <= 19:
                     suspension_count = 1
-                elif yellows == 10 and team_games_played <= 32:
+                elif yellows == 10 and (team_games_played + game + 1) <= 32:
                     suspension_count = 2
                 elif yellows == 15:
                     suspension_count = 3
                 elif yellows == 20:
                     suspension_count = games_in_season
-            else:
-                received_yellow = False
-
-        team_games_played += 1
-
-        # print(f"Suspended: {suspended}")
-        # print()
-        # print(f"Received yellow this game: {received_yellow}")
-        # print()
-        # print()
-        # print()
 
     return game_suspensions
 
@@ -184,35 +165,32 @@ def main():
     team_ids = fetch_teams(connection)
     for team_id in team_ids:
         team_games_played = find_teams_games_played(connection, team_id)
-
         player_ids = fetch_players_from_team(connection, team_id)
 
         for player_id in player_ids:
-            # print(f"Player ID: {player_id}")
             gwdata = fetch_players_gwdata(connection, player_id)
             suspension_count, total_yellows, yc_prob = yc_prob_and_suspension_info(gwdata, team_games_played)
-            # print(suspension_count, total_yellows, yc_prob, team_games_played)
             
-            if yc_prob != 0:
-                unique_combinations.add((suspension_count, total_yellows, yc_prob, team_games_played))
+            unique_combinations.add((suspension_count, total_yellows, yc_prob, team_games_played))
 
-    # print("Unique Combinations:")
     for combination in unique_combinations:
         suspension_count, total_yellows, yc_prob, team_games_played = combination
         remaining_games = GAMES_IN_SEASON - team_games_played
-        # print(f"Suspension Count: {suspension_count}, Total Yellows: {total_yellows}, YC Prob: {yc_prob}, Team Games Played: {team_games_played}")
         
         cumulative_suspensions = {game_no: 0 for game_no in range(1, remaining_games + 1)}
         
         for _ in range(SIMULATIONS_PER_COMBINATION):    
             game_suspensions = simulate_yellows(suspension_count, team_games_played, total_yellows, yc_prob, GAMES_IN_SEASON)
-            for game_no, suspensions in game_suspensions.items():
+            
+            for game_no, suspensions in enumerate(game_suspensions, start=1):
                 cumulative_suspensions[game_no] += suspensions
 
+        # Insert results into the database
         for game_no, suspensions in cumulative_suspensions.items():
             insert_into_suspensions_table(connection, suspension_count, team_games_played, total_yellows, yc_prob, game_no, suspensions, SIMULATIONS_PER_COMBINATION)
         
         print(f"Inserted into table for combination: {combination}")
+
     
     connection.close()
 
