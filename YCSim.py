@@ -1,7 +1,7 @@
 import mysql.connector
 import numpy as np
 
-SIMULATIONS_PER_COMBINATION = 1000
+SIMULATIONS_PER_COMBINATION = 20000
 
 GAMES_IN_SEASON = 38
 SEASON = '2024/25'
@@ -93,24 +93,36 @@ def fetch_players_gwdata(connection, player_id):
 
     return game_info
 
+def find_appearance_chance(games_player_eligible):
+    appearance_weights = calculate_weights(TIME_DECAY, len(games_player_eligible))
+
+    appearance_chance = 0
+
+    for i, game in enumerate(games_player_eligible):
+        print(game)
+        benched = game["benched"]
+        if benched == 1:
+            continue
+        else:
+            appearance_chance += 1 * appearance_weights[i]
+
+    appearance_chance = round(appearance_chance, 3)
+
+    return appearance_chance
+
+
 def yc_prob_and_suspension_info(gwdata, team_games_played):
 
     current_yellows = 0
     games_played = 0
     suspension_count = 0
 
-    total_games = len(gwdata)
+    games_player_eligible = []
 
-    # The weights are initially ordered from highest to lowest, but we loop through games from oldest to newest
-    bench_weights = calculate_weights(TIME_DECAY, total_games)
-
-    bench_weights.reverse()
-    benched_chance = 0
-
-    for i, gw in enumerate(gwdata):
-        yellow_card = gw['yellow_cards']
-        minutes = gw['minutes']
-        benched = gw['benched']
+    for game in gwdata:
+        yellow_card = game['yellow_cards']
+        minutes = game['minutes']
+        benched = game['benched']
 
         if suspension_count > 0:
             suspension_count -= 1
@@ -118,9 +130,8 @@ def yc_prob_and_suspension_info(gwdata, team_games_played):
         if minutes > 0:
             games_played += 1
 
-        # Calculating the chance of the player being benched where we weigh more recent games more
-        if benched == True:
-            benched_chance += benched * bench_weights[i]
+        if benched != 0:
+            games_player_eligible.insert(0, game)
     
         current_yellows += yellow_card
 
@@ -135,12 +146,12 @@ def yc_prob_and_suspension_info(gwdata, team_games_played):
                 # Uncertain what happens at this point, but it will be a suspension. Has never happened though
                 suspension_count = GAMES_IN_SEASON
 
+    appearance_chance = find_appearance_chance(games_player_eligible)
+
     # Minimum cap at 5 to avoid getting 100% if a player has a very small sample size
     yc_prob_raw = current_yellows / max(5, games_played)
 
-    play_chance = 1 - benched_chance
-
-    yc_prob = round(yc_prob_raw * play_chance, 3)
+    yc_prob = round(yc_prob_raw * appearance_chance, 3)
 
     return suspension_count, current_yellows, yc_prob
 
@@ -194,8 +205,9 @@ def main():
 
         for player_id in player_ids:
             gwdata = fetch_players_gwdata(connection, player_id)
+            print(f"Player ID: {player_id}")
             suspension_count, current_yellows, yc_prob= yc_prob_and_suspension_info(gwdata, team_games_played)
-            
+
             unique_combinations.add((suspension_count, current_yellows, yc_prob, team_games_played))
 
     for combination in unique_combinations:
